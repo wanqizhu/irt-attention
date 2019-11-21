@@ -8,8 +8,22 @@ import pdb
 import matplotlib.pyplot as plt
 import os
 
+
+VERSION = 1.0
 GUESS = 0.25
-VERSION = 1
+SEED = 1
+RESTART = True
+
+LOSS_FILE = f'data/v{VERSION}-sim-loss.csv'
+PARAMS_FILE = f'data/v{VERSION}-params.json'
+
+DESCRIPTION = {
+  1.0 : 'difficulty + attention -> ability, attention random line'
+        'with endpoints drawn from unif(0, 1)',
+  1.1 : '1.0, but hide attention from prediction model',
+  1.2 : '1.0 but tripled attention',
+  1.3 : '1.2, but hide attention from prediction model',
+}
 
 
 # first, let's try predicting ability from difficulty X attention
@@ -25,7 +39,9 @@ class StudentAbilityModel(nn.Module):
     # self.endAttention = nn.Parameter(torch.zeros(1))
 
 
-  def forward(self, difficulty, attention):
+  def forward(self, difficulty, attention=None):
+    if attention is None:
+      attention = 1
     prob_correct = torch.sigmoid(self.ability * attention - difficulty)
     return GUESS + (1-GUESS) * prob_correct
 
@@ -43,7 +59,12 @@ def optimize(model, data):
   # (# data, # features). In our case, we only have 1 feature
   # so the second dimension will be 1. These next two lines
   # transform the data to the right shape!
-  difficulty, attention, y = data
+  if len(data) == 3:
+    difficulty, attention, y = data
+  else:
+    difficulty, y = data
+    attention = None
+
   bestParams = None
 
   # at the beginning, we default minimum loss to infinity
@@ -80,13 +101,21 @@ def optimize(model, data):
       bestParams = currParams
       minLoss = loss.item()
 
-  output(loss.item(), bestParams, currParams)
+  with open(LOSS_FILE, 'a') as f:
+    output(loss.item(), bestParams, currParams, f)
   return bestParams
 
 
 ########### Helper methods #########
 
-def output(loss, bestParams, currParams):
+TOTAL_LOSS = 0
+def output(loss, bestParams, currParams, file=None):
+  global TOTAL_LOSS
+  TOTAL_LOSS += loss
+
+  if file is not None:
+    file.write('{:.4f}\n'.format(loss))
+  
   s = 'loss = {:.4f}, ability = {:.4f}'.format(
     loss,
     bestParams[0]
@@ -94,14 +123,14 @@ def output(loss, bestParams, currParams):
   print(s)
 
 
-def loadData(prefix='sim'):
-  diff = np.genfromtxt(f'data/{prefix}-difficulty-v{VERSION}.csv', delimiter=',')
+def loadData():
+  diff = np.genfromtxt(f'data/v{VERSION}-sim-difficulty.csv', delimiter=',')
   diff = torch.from_numpy(diff).float()
 
-  responses = np.genfromtxt(f'data/{prefix}-responses-v{VERSION}.csv', delimiter=',')
+  responses = np.genfromtxt(f'data/v{VERSION}-sim-responses.csv', delimiter=',')
   responses = torch.from_numpy(responses).float()
   
-  attentions = np.genfromtxt(f'data/{prefix}-attentions-v{VERSION}.csv', delimiter=',')
+  attentions = np.genfromtxt(f'data/v{VERSION}-sim-attentions.csv', delimiter=',')
   attentions = torch.from_numpy(attentions).float()
 
   return diff, attentions, responses
@@ -134,6 +163,9 @@ def gen_data(nQuestions = 30, nStudents = 100):
 
   start_attentions = np.random.random(size=nStudents)
   end_attentions = np.random.random(size=nStudents)
+  if VERSION in [1.2, 1.3]:  # triple the range of attention variation
+    start_attentions *= 3
+    end_attentions *= 3
 
   attentions = [np.linspace(start, end, nQuestions)
       for (start, end) in zip(start_attentions, end_attentions)
@@ -143,15 +175,15 @@ def gen_data(nQuestions = 30, nStudents = 100):
   # print(attention)
 
 
-  np.savetxt(f'data/sim-difficulty-v{VERSION}.csv', difficulty, fmt='%.3f')
-  np.savetxt(f'data/sim-abilities-v{VERSION}.csv', abilities, fmt='%.3f')
-  np.savetxt(f'data/sim-attentions-v{VERSION}.csv', attentions, delimiter=',', fmt='%.3f')
+  np.savetxt(f'data/v{VERSION}-sim-difficulty.csv', difficulty, fmt='%.3f')
+  np.savetxt(f'data/v{VERSION}-sim-abilities.csv', abilities, fmt='%.3f')
+  np.savetxt(f'data/v{VERSION}-sim-attentions.csv', attentions, delimiter=',', fmt='%.3f')
 
   attentive_abilities = attentions * abilities.reshape(nStudents, -1)
   #print(attentive_abilities)
 
   student_answers = run_trial(attentive_abilities, difficulty)
-  np.savetxt(f'data/sim-responses-v{VERSION}.csv', student_answers, fmt='%d', delimiter=',')
+  np.savetxt(f'data/v{VERSION}-sim-responses.csv', student_answers, fmt='%d', delimiter=',')
 
 
 
@@ -169,23 +201,56 @@ def main():
   to the true abilities (sim-abilities.csv).
 
   '''
+  if not RESTART and os.path.exists(f'data/v{VERSION}-sim-abilities-pred.csv'):
+    return
 
+  # reset output files
+  if RESTART:
+    if os.path.exists(LOSS_FILE):
+      os.remove(LOSS_FILE)
+
+  # log params
+  with open(PARAMS_FILE, 'w') as f:
+    f.write(f'{{version: {VERSION}, guess: {GUESS}, seed: {SEED},'
+            f' description: {DESCRIPTION[VERSION]}}}\n')
+
+
+  np.random.seed(SEED)
+
+  # generate the simulated data
   gen_data()
   difficulty, attentions, responses = loadData()
   print(difficulty.size())
 
-  if not os.path.exists(f'data/sim-abilities-pred-v{VERSION}.csv'):
-    with open(f'data/sim-abilities-pred-v{VERSION}.csv', 'w') as f:
-      for attention, response in zip(attentions, responses):
-        model = StudentAbilityModel()
-        best_params = optimize(model, (difficulty, attention, response))
-        f.write('{:.4f}\n'.format(best_params[0]))
+  # run model, save predicetd ability and loss
+  # TODO: move this file saving to be configured inside model, like loss
+  with open(f'data/v{VERSION}-sim-abilities-pred.csv', 'w') as f:
+    global TOTAL_LOSS
+    TOTAL_LOSS = 0
 
-  true_abilities = np.genfromtxt(f'data/sim-abilities-v{VERSION}.csv', delimiter=',')
-  pred_abilities = np.genfromtxt(f'data/sim-abilities-pred-v{VERSION}.csv', delimiter=',')
+    for attention, response in zip(attentions, responses):
+      model = StudentAbilityModel()
+      if VERSION in [1.0, 1.2]:
+        data = (difficulty, attention, response)
+      elif VERSION in [1.1, 1.3]:
+        data = (difficulty, response)
+      else:
+        raise ValueError(f"Unknown version: {VERSION}")
+
+      best_params = optimize(model, data)
+      f.write('{:.4f}\n'.format(best_params[0]))
+
+  avg_loss = TOTAL_LOSS / len(responses)
+  print('Avg loss: ', avg_loss)
+
+  true_abilities = np.genfromtxt(f'data/v{VERSION}-sim-abilities.csv', delimiter=',')
+  pred_abilities = np.genfromtxt(f'data/v{VERSION}-sim-abilities-pred.csv', delimiter=',')
   plt.scatter(true_abilities, pred_abilities)
   plt.plot([-2, 2], [-2, 2])  # plot y=x
-  plt.savefig(f'data/sim-abilities-scatter-v{VERSION}.png')
+  plt.title(f"v{VERSION}: Avg loss (binary_cross_entropy) {avg_loss}")
+  plt.xlabel("True Abilities")
+  plt.ylabel("Predicted Abilities")
+  plt.savefig(f'data/v{VERSION}-sim-abilities-scatter.png')
   plt.show()
 
 
