@@ -1,0 +1,1 @@
+{version: 1.71, guess: 0.25, seed: 1, description: hide attention but model can predict arbitrary attention at each step see if model can learn this walk}
