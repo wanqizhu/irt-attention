@@ -22,6 +22,8 @@ V1.71, 1.72
 - some overfitting occurs even when we constrain the model to make approx-0.1-step-size random walks
   - I don't know how to actually force the model to make a categorical, noncontinuous decision among [-0.1, 0, 0.1] each step
 
+V1.73
+- bound the model prediction in the range [0, 2]: achieves much better predicted attentions and slightly better abilities, but on the whole, abilities are still significantly being overpredicted and attentions being underpredicted (avg value < 1).
 
 ---
 

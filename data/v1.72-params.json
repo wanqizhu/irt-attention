@@ -1,1 +1,1 @@
-{version: 1.72, guess: 0.25, seed: 1, description: model knows the generative function, see if it can retrace the walk}
+{version: 1.72, guess: 0.25, seed: 1, description: model knows the generative function, see if it can retrace the walk  due to the failure of the sign function in computing gradients,  I use scaled sigmoid to approximate each step's movement,  the model mostly makes +0.1/-0.1 steps and not much steps close to 0}
